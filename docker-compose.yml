@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database service
+  postgres:
+    image: postgres:14-alpine
+    container_name: shortlink-postgres
+    environment:
+      POSTGRES_DB: shortlink
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - shortlink-network
+
+  # Redis cache service
+  redis:
+    image: redis:7-alpine
+    container_name: shortlink-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - shortlink-network
+  # Shortlink Core service (uncomment to enable)
+  # shortlink-core:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: shortlink-core
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   environment:
+  #     SHORTLINK_STORAGE_TYPE: both
+  #     SHORTLINK_STORAGE_POSTGRES_URL: postgres://postgres:postgres@postgres:5432/shortlink?sslmode=disable
+  #     SHORTLINK_STORAGE_REDIS_URL: redis://redis:6379
+  #     SHORTLINK_SERVER_PORT: 50051
+  #   ports:
+  #     - "50051:50051"
+  #   restart: unless-stopped
+  #   networks:
+  #     - shortlink-network
+
+networks:
+  shortlink-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

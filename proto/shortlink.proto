@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package shortlink;
+
+option go_package = "github.com/hohotang/shortlink-gateway/proto";
+
+// URLService provides URL shortening and expansion functionality
+service URLService {
+  // ShortenURL creates a short URL from the original URL
+  rpc ShortenURL(ShortenURLRequest) returns (ShortenURLResponse);
+  
+  // ExpandURL resolves a short URL to its original URL
+  rpc ExpandURL(ExpandURLRequest) returns (ExpandURLResponse);
+}
+
+// ShortenURLRequest contains the original URL to shorten
+message ShortenURLRequest {
+  string original_url = 1;
+}
+
+// ShortenURLResponse contains the generated short URL ID
+message ShortenURLResponse {
+  string short_id = 1;
+  string short_url = 2; // Full URL including domain
+}
+
+// ExpandURLRequest contains the short URL ID to expand
+message ExpandURLRequest {
+  string short_id = 1;
+}
+
+// ExpandURLResponse contains the original URL
+message ExpandURLResponse {
+  string original_url = 1;
+} 

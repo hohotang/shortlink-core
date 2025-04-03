@@ -1,0 +1,13 @@
+server:
+  port: 50051
+  base_url: http://localhost:8080/
+
+storage:
+  # Available options: memory, redis, postgres, both (both redis and postgres)
+  type: memory
+  redis_url: redis://localhost:6379
+  postgres_url: postgres://postgres:postgres@localhost:5432/shortlink?sslmode=disable
+  cache_ttl: 3600 # seconds
+
+snowflake:
+  machine_id: 1 
