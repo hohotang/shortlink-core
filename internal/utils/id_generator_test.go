@@ -26,8 +26,10 @@ func (m *mockSnowflakeGenerator) Encode(id int64) string {
 func (m *mockSnowflakeGenerator) GenerateShortID() string {
 	id, err := m.NextID()
 	if err != nil {
-		return ""
+		// Fallback to timestamp-based ID in case of error
+		id = timeNow().UnixNano()
 	}
+
 	return m.Encode(id)
 }
 

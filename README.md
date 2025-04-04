@@ -112,8 +112,10 @@ These numeric IDs are then encoded to Base62 (0-9, a-z, A-Z) for shorter represe
 
 ## 📦 TODO (Next Steps)
 
-- [ ] Add unit tests
+- [x] Add unit tests
 - [ ] Add integration tests with the API Gateway
 - [ ] Add OpenTelemetry tracing
 - [ ] Add metrics collection
 - [ ] Use pod IP for machine ID in Kubernetes environments 
+- [ ] Implement better error handling
+- [ ] Implement better log

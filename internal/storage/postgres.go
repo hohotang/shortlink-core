@@ -122,48 +122,75 @@ func (s *PostgresStorage) StoreWithID(shortID string, originalURL string) error 
 
 			// We have a conflict - we're trying to assign this URL to a new short_id
 			// but it already has a different short_id
-
-			// We have two options:
-			// 1. Return the existing short_id (URL already shortened)
-			// 2. Update the URL to use the new short_id (override)
-
-			// In this implementation, we'll use option 2 - override the mapping
-
-			// Start a transaction for consistency
-			tx, err := s.db.Begin()
-			if err != nil {
-				return fmt.Errorf("failed to begin transaction: %w", err)
-			}
-
-			// Delete the existing record for this original_url
-			_, err = tx.Exec("DELETE FROM urls WHERE short_id = $1", existingShortID)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("failed to delete existing record: %w", err)
-			}
-
-			// Now insert the new record
-			_, err = tx.Exec(
-				"INSERT INTO urls (short_id, original_url) VALUES ($1, $2)",
-				shortID, originalURL,
-			)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("failed to insert new record: %w", err)
-			}
-
-			// Commit the transaction
-			if err = tx.Commit(); err != nil {
-				return fmt.Errorf("failed to commit transaction: %w", err)
-			}
-
-			return nil
+			return s.replaceURLMapping(existingShortID, shortID, originalURL)
 		}
 
 		return fmt.Errorf("failed to store URL: %w", err)
 	}
 
 	return nil
+}
+
+// Helper function to check if an error is a PostgreSQL unique constraint violation
+func isPgUniqueViolation(err error) bool {
+	// This is a simplified check - in a real implementation, you'd want to use
+	// github.com/lib/pq's error type assertions to check more accurately
+	return err != nil && (err.Error() == "pq: duplicate key value violates unique constraint" ||
+		err.Error() == "ERROR: duplicate key value violates unique constraint" ||
+		err.Error() == "duplicate key value violates unique constraint" ||
+		err.Error() == "pq: duplicate key value")
+}
+
+// withTransaction is a helper function that executes a function within a transaction
+// It handles the begin, commit, and rollback operations automatically
+func (s *PostgresStorage) withTransaction(fn func(*sql.Tx) error) error {
+	// Start a transaction
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Execute the function
+	err = fn(tx)
+
+	// If there was an error, rollback
+	if err != nil {
+		// Attempt to rollback, but don't override the original error
+		if rbErr := tx.Rollback(); rbErr != nil {
+			// Log rollback error but return the original error
+			log.Printf("Error rolling back transaction: %v", rbErr)
+		}
+		return err
+	}
+
+	// Otherwise commit
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// replaceURLMapping handles the transaction to replace an existing URL mapping with a new one
+func (s *PostgresStorage) replaceURLMapping(existingShortID, newShortID, originalURL string) error {
+	return s.withTransaction(func(tx *sql.Tx) error {
+		// Delete the existing record for this original_url
+		_, err := tx.Exec("DELETE FROM urls WHERE short_id = $1", existingShortID)
+		if err != nil {
+			return fmt.Errorf("failed to delete existing record: %w", err)
+		}
+
+		// Now insert the new record
+		_, err = tx.Exec(
+			"INSERT INTO urls (short_id, original_url) VALUES ($1, $2)",
+			newShortID, originalURL,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert new record: %w", err)
+		}
+
+		return nil
+	})
 }
 
 // Get implements URLStorage.Get
@@ -184,16 +211,6 @@ func (s *PostgresStorage) Get(shortID string) (string, error) {
 	}
 
 	return originalURL, nil
-}
-
-// Helper function to check if an error is a PostgreSQL unique constraint violation
-func isPgUniqueViolation(err error) bool {
-	// This is a simplified check - in a real implementation, you'd want to use
-	// github.com/lib/pq's error type assertions to check more accurately
-	return err != nil && (err.Error() == "pq: duplicate key value violates unique constraint" ||
-		err.Error() == "ERROR: duplicate key value violates unique constraint" ||
-		err.Error() == "duplicate key value violates unique constraint" ||
-		err.Error() == "pq: duplicate key value")
 }
 
 // Close closes the database connection
