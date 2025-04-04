@@ -18,6 +18,7 @@ const (
 type IDGenerator interface {
 	NextID() (int64, error)
 	Encode(id int64) string
+	GenerateShortID() string
 }
 
 // SnowflakeGenerator wraps bwmarrin/snowflake Node for ID generation
@@ -72,13 +73,13 @@ func (s *SnowflakeGenerator) Encode(id int64) string {
 	return string(result)
 }
 
-// GenerateShortID generates a short ID using snowflake and base62
-func GenerateShortID(generator IDGenerator) string {
-	id, err := generator.NextID()
+// GenerateShortID generates a short ID using this generator
+func (s *SnowflakeGenerator) GenerateShortID() string {
+	id, err := s.NextID()
 	if err != nil {
 		// Fallback to timestamp-based ID in case of error
 		id = timeNow().UnixNano()
 	}
 
-	return generator.Encode(id)
+	return s.Encode(id)
 }

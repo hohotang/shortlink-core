@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/hohotang/shortlink-core/internal/config"
 	_ "github.com/lib/pq"
 )
 
@@ -14,52 +15,47 @@ type PostgresStorage struct {
 }
 
 // NewPostgresStorage creates a new PostgresStorage instance
-func NewPostgresStorage(connStr string) (*PostgresStorage, error) {
+func NewPostgresStorage(cfg *config.Config) (*PostgresStorage, error) {
+	var connStr string
+	pgConfig := cfg.Storage.Postgres
+
+	// Generate connection string from individual parameters
+	if pgConfig.Host != "" {
+		// Use the new detailed config if available
+		connStr = fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			pgConfig.Host, pgConfig.Port, pgConfig.User, pgConfig.Password, pgConfig.DBName, pgConfig.SSLMode,
+		)
+	} else {
+		// Fall back to the legacy postgres_url if detailed config is not set
+		connStr = cfg.Storage.PostgresURL
+		log.Printf("Using legacy postgres_url config. Consider updating to the new postgres configuration format.")
+	}
+
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
 
+	// Configure connection pool
+	if pgConfig.MaxOpenConns > 0 {
+		db.SetMaxOpenConns(pgConfig.MaxOpenConns)
+		log.Printf("PostgreSQL connection pool: max open connections set to %d", pgConfig.MaxOpenConns)
+	}
+
+	if pgConfig.MaxIdleConns > 0 {
+		db.SetMaxIdleConns(pgConfig.MaxIdleConns)
+		log.Printf("PostgreSQL connection pool: max idle connections set to %d", pgConfig.MaxIdleConns)
+	}
+
+	if pgConfig.ConnMaxLifetime > 0 {
+		db.SetConnMaxLifetime(pgConfig.ConnMaxLifetime)
+		log.Printf("PostgreSQL connection pool: connection max lifetime set to %s", pgConfig.ConnMaxLifetime)
+	}
+
 	// Test connection
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
-	}
-
-	// Create urls table if it doesn't exist
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS urls (
-			short_id VARCHAR(255) PRIMARY KEY,
-			original_url TEXT NOT NULL,
-			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-			last_accessed TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-		)
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create urls table: %w", err)
-	}
-
-	// Create unique index on original_url for reverse lookups
-	_, err = db.Exec(`
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_urls_original_url ON urls (original_url)
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create unique index on original_url: %w", err)
-	}
-
-	// Create index on created_at
-	_, err = db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_urls_created_at ON urls (created_at)
-	`)
-	if err != nil {
-		log.Printf("Warning: failed to create index on created_at: %v", err)
-	}
-
-	// Create index on last_accessed
-	_, err = db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_urls_last_accessed ON urls (last_accessed)
-	`)
-	if err != nil {
-		log.Printf("Warning: failed to create index on last_accessed: %v", err)
 	}
 
 	return &PostgresStorage{db: db}, nil
@@ -94,10 +90,9 @@ func (s *PostgresStorage) Store(originalURL string) (string, error) {
 	} else if err != ErrNotFound {
 		// An error other than "not found" occurred
 		return "", err
+	} else {
+		return "", ErrNotFound
 	}
-
-	// URL doesn't exist yet, but we can't generate a new ID here
-	return "", fmt.Errorf("postgres storage requires specifying short ID, use StoreWithID instead")
 }
 
 // StoreWithID stores a URL with a specific ID

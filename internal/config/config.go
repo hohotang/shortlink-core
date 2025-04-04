@@ -3,7 +3,9 @@ package config
 import (
 	"log"
 	"strings"
+	"time"
 
+	"github.com/hohotang/shortlink-core/internal/models"
 	"github.com/spf13/viper"
 )
 
@@ -20,12 +22,26 @@ type ServerConfig struct {
 	BaseURL string `mapstructure:"base_url"`
 }
 
+// PostgresConfig holds PostgreSQL connection parameters
+type PostgresConfig struct {
+	Host            string        `mapstructure:"host"`
+	Port            int           `mapstructure:"port"`
+	User            string        `mapstructure:"user"`
+	Password        string        `mapstructure:"password"`
+	DBName          string        `mapstructure:"dbname"`
+	SSLMode         string        `mapstructure:"sslmode"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+}
+
 // StorageConfig represents the storage configuration
 type StorageConfig struct {
-	Type        string `mapstructure:"type"` // "memory", "redis", "postgres", "both"
-	RedisURL    string `mapstructure:"redis_url"`
-	PostgresURL string `mapstructure:"postgres_url"`
-	CacheTTL    int    `mapstructure:"cache_ttl"` // Redis cache TTL in seconds
+	Type        models.StorageType `mapstructure:"type"` // "memory", "redis", "postgres", "both"
+	RedisURL    string             `mapstructure:"redis_url"`
+	PostgresURL string             `mapstructure:"postgres_url"` // Kept for backward compatibility
+	Postgres    PostgresConfig     `mapstructure:"postgres"`
+	CacheTTL    int                `mapstructure:"cache_ttl"` // Redis cache TTL in seconds
 }
 
 // SnowflakeConfig represents the configuration for snowflake ID generation
@@ -39,9 +55,24 @@ func Load() (*Config, error) {
 
 	// Set default values
 	v.SetDefault("server.port", 50051)
-	v.SetDefault("storage.type", "memory")
+	v.SetDefault("server.base_url", "http://localhost:8080/")
+	v.SetDefault("storage.type", models.Memory.String())
 	v.SetDefault("storage.redis_url", "redis://localhost:6379")
+
+	// Default for legacy postgres_url
 	v.SetDefault("storage.postgres_url", "postgres://postgres:postgres@localhost:5432/shortlink?sslmode=disable")
+
+	// Defaults for new postgres configuration
+	v.SetDefault("storage.postgres.host", "localhost")
+	v.SetDefault("storage.postgres.port", 5432)
+	v.SetDefault("storage.postgres.user", "postgres")
+	v.SetDefault("storage.postgres.password", "postgres")
+	v.SetDefault("storage.postgres.dbname", "shortlink")
+	v.SetDefault("storage.postgres.sslmode", "disable")
+	v.SetDefault("storage.postgres.max_open_conns", 25)
+	v.SetDefault("storage.postgres.max_idle_conns", 5)
+	v.SetDefault("storage.postgres.conn_max_lifetime", time.Minute*15)
+
 	v.SetDefault("storage.cache_ttl", 3600) // 1 hour
 	v.SetDefault("snowflake.machine_id", 1)
 

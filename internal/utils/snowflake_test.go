@@ -139,7 +139,7 @@ func TestShortLinkID(t *testing.T) {
 	linkCount := 100
 	ids := make(map[string]bool)
 	for i := 0; i < linkCount; i++ {
-		id := GenerateShortID(generator)
+		id := generator.GenerateShortID()
 		if ids[id] {
 			t.Errorf("Duplicate short ID generated: %s", id)
 		}
@@ -177,7 +177,7 @@ func TestTimeIndependence(t *testing.T) {
 	}
 
 	// GenerateShortID should work
-	shortID := GenerateShortID(generator)
+	shortID := generator.GenerateShortID()
 	if shortID == "" {
 		t.Errorf("GenerateShortID() returned empty string")
 	}

@@ -2,33 +2,32 @@ package storage
 
 import (
 	"fmt"
+
+	"github.com/hohotang/shortlink-core/internal/config"
 )
 
-// CombinedStorage implements URLStorage with PostgreSQL as primary storage and Redis as cache
+// CombinedStorage combines PostgreSQL and Redis for efficient storage
+// It uses Redis as a cache and PostgreSQL as the primary storage
 type CombinedStorage struct {
 	postgres *PostgresStorage
 	redis    *RedisStorage
 }
 
-// NewCombinedStorage creates a new CombinedStorage instance
-func NewCombinedStorage(postgresURL, redisURL string, cacheTTL int) (*CombinedStorage, error) {
-	// Initialize PostgreSQL storage
-	postgres, err := NewPostgresStorage(postgresURL)
+// NewCombinedStorage creates a combined Redis+PostgreSQL storage
+func NewCombinedStorage(redisURL string, cacheTTL int, cfg *config.Config) (*CombinedStorage, error) {
+	redis, err := NewRedisStorage(redisURL, cacheTTL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Redis storage: %w", err)
+	}
+
+	postgres, err := NewPostgresStorage(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize PostgreSQL storage: %w", err)
 	}
 
-	// Initialize Redis storage
-	redis, err := NewRedisStorage(redisURL, cacheTTL)
-	if err != nil {
-		// Close PostgreSQL connection if Redis fails
-		postgres.Close()
-		return nil, fmt.Errorf("failed to initialize Redis storage: %w", err)
-	}
-
 	return &CombinedStorage{
-		postgres: postgres,
 		redis:    redis,
+		postgres: postgres,
 	}, nil
 }
 
@@ -60,10 +59,10 @@ func (s *CombinedStorage) Store(originalURL string) (string, error) {
 	} else if err != ErrNotFound {
 		// PostgreSQL error other than "not found"
 		return "", err
+	} else {
+		// Not found in either storage
+		return "", ErrNotFound
 	}
-
-	// Not found in either storage
-	return "", fmt.Errorf("combined storage requires specifying short ID, use StoreWithID instead")
 }
 
 // StoreWithID stores a URL with a specific ID in both PostgreSQL and Redis

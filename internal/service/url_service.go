@@ -7,6 +7,7 @@ import (
 	"net/url"
 
 	"github.com/hohotang/shortlink-core/internal/config"
+	"github.com/hohotang/shortlink-core/internal/models"
 	"github.com/hohotang/shortlink-core/internal/storage"
 	"github.com/hohotang/shortlink-core/internal/utils"
 	"github.com/hohotang/shortlink-core/proto"
@@ -17,97 +18,119 @@ type URLService struct {
 	proto.UnimplementedURLServiceServer
 	storage   storage.URLStorage
 	baseURL   string
-	generator *utils.SnowflakeGenerator
+	generator utils.IDGenerator
 }
 
 // NewURLService creates a new URLService instance
-func NewURLService(cfg *config.Config) *URLService {
-	// Initialize snowflake generator
-	generator, err := utils.NewSnowflakeGenerator(cfg.Snowflake.MachineID)
+func NewURLService(cfg *config.Config) (*URLService, error) {
+	var store storage.URLStorage
+	var err error
+	var generator utils.IDGenerator
+
+	// Create a snowflake generator for ID generation
+	generator, err = utils.NewSnowflakeGenerator(cfg.Snowflake.MachineID)
 	if err != nil {
-		log.Printf("Warning: Failed to initialize snowflake generator: %v. Using default.", err)
-		generator, _ = utils.NewSnowflakeGenerator(1) // Default to 1
+		return nil, fmt.Errorf("failed to create Snowflake generator: %w", err)
 	}
 
-	// Create storage based on configuration
-	var store storage.URLStorage
+	// Initialize the storage based on configuration
 	switch cfg.Storage.Type {
-	case "redis":
+	case models.Memory:
+		store = storage.NewMemoryStorage()
+
+	case models.Redis:
 		store, err = storage.NewRedisStorage(cfg.Storage.RedisURL, cfg.Storage.CacheTTL)
 		if err != nil {
-			log.Printf("Warning: Failed to initialize Redis storage: %v. Falling back to memory.", err)
-			store = storage.NewMemoryStorage()
+			return nil, fmt.Errorf("failed to initialize Redis storage: %w", err)
 		}
-	case "postgres":
-		store, err = storage.NewPostgresStorage(cfg.Storage.PostgresURL)
+
+	case models.Postgres:
+		store, err = storage.NewPostgresStorage(cfg)
 		if err != nil {
-			log.Printf("Warning: Failed to initialize PostgreSQL storage: %v. Falling back to memory.", err)
-			store = storage.NewMemoryStorage()
+			return nil, fmt.Errorf("failed to initialize PostgreSQL storage: %w", err)
 		}
-	case "both":
-		store, err = storage.NewCombinedStorage(cfg.Storage.PostgresURL, cfg.Storage.RedisURL, cfg.Storage.CacheTTL)
+
+	case models.Combined:
+		store, err = storage.NewCombinedStorage(cfg.Storage.RedisURL, cfg.Storage.CacheTTL, cfg)
 		if err != nil {
-			log.Printf("Warning: Failed to initialize combined storage: %v. Falling back to memory.", err)
-			store = storage.NewMemoryStorage()
+			return nil, fmt.Errorf("failed to initialize combined storage: %w", err)
 		}
+
 	default:
-		store = storage.NewMemoryStorage()
+		return nil, fmt.Errorf("unknown storage type: %s", cfg.Storage.Type)
 	}
 
-	baseURL := cfg.Server.BaseURL // 使用配置中的 base_url
+	// Default base URL from config
+	baseURL := cfg.Server.BaseURL
 
 	return &URLService{
 		storage:   store,
 		baseURL:   baseURL,
-		generator: generator,
-	}
+		generator: generator, // The generator is now only in the service layer
+	}, nil
 }
 
 // ShortenURL implements the ShortenURL RPC method
 func (s *URLService) ShortenURL(ctx context.Context, req *proto.ShortenURLRequest) (*proto.ShortenURLResponse, error) {
-	// Validate URL
 	originalURL := req.OriginalUrl
-	if _, err := url.ParseRequestURI(originalURL); err != nil {
-		return nil, fmt.Errorf("invalid URL: %w", err)
+
+	if err := s.validateURL(originalURL); err != nil {
+		return nil, err
 	}
 
-	// Generate a new snowflake ID
-	snowflakeID, err := s.generator.NextID()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate ID: %w", err)
+	shortID, err := s.findExistingShortID(originalURL)
+	if err != nil && err != storage.ErrNotFound {
+		return nil, err
 	}
 
-	// Encode to base62
-	shortID := s.generator.Encode(snowflakeID)
-
-	// Store URL with the generated ID
-	var storeErr error
-
-	// If storage supports StoreWithID, use it
-	if storageWithID, ok := s.storage.(interface {
-		StoreWithID(shortID string, originalURL string) error
-	}); ok {
-		storeErr = storageWithID.StoreWithID(shortID, originalURL)
-	} else {
-		// Fall back to standard Store method, which might not be ideal
-		var genID string
-		genID, storeErr = s.storage.Store(originalURL)
-		if genID != shortID {
-			log.Printf("Warning: Generated ID (%s) differs from snowflake ID (%s)", genID, shortID)
+	if err == storage.ErrNotFound {
+		shortID, err = s.generateAndStoreShortID(originalURL)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	if storeErr != nil {
-		return nil, fmt.Errorf("failed to store URL: %w", storeErr)
+	return s.buildResponse(shortID), nil
+}
+
+// validateURL checks if the URL is valid
+func (s *URLService) validateURL(originalURL string) error {
+	if _, err := url.ParseRequestURI(originalURL); err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	return nil
+}
+
+// findExistingShortID checks if a short link already exists for the URL
+func (s *URLService) findExistingShortID(originalURL string) (string, error) {
+	shortID, err := s.storage.Store(originalURL)
+	if err == nil {
+		// Found existing short ID, log and return
+		log.Printf("Found existing short ID %s for URL %s", shortID, originalURL)
+		return shortID, nil
+	}
+	return "", err
+}
+
+// generateAndStoreShortID creates a new short ID and stores it
+func (s *URLService) generateAndStoreShortID(originalURL string) (string, error) {
+	// Use the generator's method to generate short ID
+	shortID := s.generator.GenerateShortID()
+
+	// Store the URL and generated short ID
+	if err := s.storage.StoreWithID(shortID, originalURL); err != nil {
+		return "", fmt.Errorf("failed to store URL: %w", err)
 	}
 
-	// Build full short URL
-	shortURL := s.baseURL + shortID
+	return shortID, nil
+}
 
+// buildResponse creates the response object
+func (s *URLService) buildResponse(shortID string) *proto.ShortenURLResponse {
 	return &proto.ShortenURLResponse{
 		ShortId:  shortID,
-		ShortUrl: shortURL,
-	}, nil
+		ShortUrl: s.baseURL + shortID,
+	}
 }
 
 // ExpandURL implements the ExpandURL RPC method

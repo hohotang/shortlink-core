@@ -4,9 +4,18 @@ server:
 
 storage:
   # Available options: memory, redis, postgres, both (both redis and postgres)
-  type: memory
+  type: both
   redis_url: redis://localhost:6379
-  postgres_url: postgres://postgres:postgres@localhost:5432/shortlink?sslmode=disable
+  postgres:
+    host: localhost
+    port: 5433
+    user: postgres
+    password: postgres
+    dbname: shortlink
+    sslmode: disable
+    max_open_conns: 25
+    max_idle_conns: 5
+    conn_max_lifetime: 15m
   cache_ttl: 3600 # seconds
 
 snowflake:

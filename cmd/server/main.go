@@ -31,7 +31,10 @@ func main() {
 	grpcServer := grpc.NewServer()
 
 	// Create URL service
-	urlService := service.NewURLService(cfg)
+	urlService, err := service.NewURLService(cfg)
+	if err != nil {
+		log.Fatalf("Failed to create URL service: %v", err)
+	}
 
 	// Register service
 	proto.RegisterURLServiceServer(grpcServer, urlService)

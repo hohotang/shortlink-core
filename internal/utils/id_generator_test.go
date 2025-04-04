@@ -23,6 +23,14 @@ func (m *mockSnowflakeGenerator) Encode(id int64) string {
 	return m.mockEncodeFunc(id)
 }
 
+func (m *mockSnowflakeGenerator) GenerateShortID() string {
+	id, err := m.NextID()
+	if err != nil {
+		return ""
+	}
+	return m.Encode(id)
+}
+
 func TestGenerateShortID_Success(t *testing.T) {
 	// Arrange
 	expectedID := int64(123456789)
@@ -41,7 +49,7 @@ func TestGenerateShortID_Success(t *testing.T) {
 	}
 
 	// Act
-	result := GenerateShortID(mock)
+	result := mock.GenerateShortID()
 
 	// Assert
 	if result != expectedEncodedID {
@@ -81,7 +89,7 @@ func TestGenerateShortID_ErrorFallback(t *testing.T) {
 	defer func() { timeNow = originalTimeNow }()
 
 	// Act
-	result := GenerateShortID(mock)
+	result := mock.GenerateShortID()
 
 	// Assert
 	if result != "fallback" {
@@ -130,7 +138,7 @@ func BenchmarkGenerateShortID(b *testing.B) {
 		}
 
 		for j := 0; j < iterations; j++ {
-			_ = GenerateShortID(generator)
+			_ = generator.GenerateShortID()
 		}
 	}
 }
@@ -166,7 +174,7 @@ func BenchmarkGenerateShortID_10000(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		// Generate 10,000 IDs in each iteration
 		for j := 0; j < 10000; j++ {
-			_ = GenerateShortID(generator)
+			_ = generator.GenerateShortID()
 		}
 	}
 }

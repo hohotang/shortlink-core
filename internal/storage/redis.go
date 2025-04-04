@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/hohotang/shortlink-core/internal/models"
 )
 
 // RedisStorage implements URLStorage with Redis
@@ -14,12 +15,6 @@ type RedisStorage struct {
 	ttl    time.Duration
 	ctx    context.Context
 }
-
-// Constants for Redis keys
-const (
-	// URL to short ID mapping hash
-	reverseURLsKey = "reverse_urls"
-)
 
 // NewRedisStorage creates a new RedisStorage instance
 func NewRedisStorage(redisURL string, ttl int) (*RedisStorage, error) {
@@ -50,7 +45,7 @@ func NewRedisStorage(redisURL string, ttl int) (*RedisStorage, error) {
 
 // FindShortIDByURL checks if a URL already has a short ID in Redis
 func (s *RedisStorage) FindShortIDByURL(originalURL string) (string, error) {
-	shortID, err := s.client.HGet(s.ctx, reverseURLsKey, originalURL).Result()
+	shortID, err := s.client.HGet(s.ctx, models.ReverseURLsKey, originalURL).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return "", ErrNotFound
@@ -59,7 +54,7 @@ func (s *RedisStorage) FindShortIDByURL(originalURL string) (string, error) {
 	}
 
 	// Check if the shortID actually exists (in case of inconsistency)
-	exists, err := s.client.Exists(s.ctx, shortID).Result()
+	exists, err := s.client.Exists(s.ctx, models.ShortIDKeyPrefix+shortID).Result()
 	if err != nil {
 		return "", fmt.Errorf("failed to check if short ID exists: %w", err)
 	}
@@ -67,7 +62,7 @@ func (s *RedisStorage) FindShortIDByURL(originalURL string) (string, error) {
 	if exists == 0 {
 		// The reverse mapping exists but the actual key doesn't
 		// Let's clean up the inconsistency
-		s.client.HDel(s.ctx, reverseURLsKey, originalURL)
+		s.client.HDel(s.ctx, models.ReverseURLsKey, originalURL)
 		return "", ErrNotFound
 	}
 
@@ -85,15 +80,15 @@ func (s *RedisStorage) Store(originalURL string) (string, error) {
 	if err == nil {
 		// URL already exists, return the existing short ID
 		// Reset TTL on access
-		s.client.Expire(s.ctx, shortID, s.ttl)
+		s.client.Expire(s.ctx, models.ShortIDKeyPrefix+shortID, s.ttl)
 		return shortID, nil
 	} else if err != ErrNotFound {
 		// An error other than "not found" occurred
 		return "", err
+	} else {
+		// URL doesn't exist yet, but we can't generate a new ID here
+		return "", ErrNotFound
 	}
-
-	// URL doesn't exist yet, but we can't generate a new ID here
-	return "", fmt.Errorf("redis storage requires specifying short ID, use StoreWithID instead")
 }
 
 // StoreWithID stores a URL with a specific ID
@@ -102,40 +97,15 @@ func (s *RedisStorage) StoreWithID(shortID string, originalURL string) error {
 		return ErrInvalidURL
 	}
 
-	// First check if this URL already exists with a different short ID
-	existingShortID, err := s.FindShortIDByURL(originalURL)
-	if err == nil && existingShortID != shortID {
-		// The URL exists with a different short ID
-		// Delete the old mapping
-		s.client.Del(s.ctx, existingShortID)
-		s.client.HDel(s.ctx, reverseURLsKey, originalURL)
-	} else if err != nil && err != ErrNotFound {
-		// An error other than "not found" occurred
-		return err
+	// Store in both directions
+	// 1. Key: shortID, Value: originalURL
+	if err := s.client.Set(s.ctx, models.ShortIDKeyPrefix+shortID, originalURL, s.ttl).Err(); err != nil {
+		return fmt.Errorf("failed to store shortID->URL mapping: %w", err)
 	}
 
-	// Check if this short ID is used for a different URL
-	existingURL, err := s.client.Get(s.ctx, shortID).Result()
-	if err == nil && existingURL != originalURL {
-		// The short ID exists but points to a different URL
-		// Find and remove any reverse mapping for the existing URL
-		s.client.HDel(s.ctx, reverseURLsKey, existingURL)
-	} else if err != nil && err != redis.Nil {
-		// An error other than "not found" occurred
-		return fmt.Errorf("failed to check if short ID exists: %w", err)
-	}
-
-	// Store URL in Redis with TTL
-	err = s.client.Set(s.ctx, shortID, originalURL, s.ttl).Err()
-	if err != nil {
-		return fmt.Errorf("failed to store URL in Redis: %w", err)
-	}
-
-	// Store reverse mapping (URL to shortID) in a hash
-	// This hash doesn't expire, but we clean up entries if they become invalid
-	err = s.client.HSet(s.ctx, reverseURLsKey, originalURL, shortID).Err()
-	if err != nil {
-		return fmt.Errorf("failed to store reverse mapping in Redis: %w", err)
+	// 2. URL to ID mapping in a hash
+	if err := s.client.HSet(s.ctx, models.ReverseURLsKey, originalURL, shortID).Err(); err != nil {
+		return fmt.Errorf("failed to store URL->shortID mapping: %w", err)
 	}
 
 	return nil
@@ -143,17 +113,16 @@ func (s *RedisStorage) StoreWithID(shortID string, originalURL string) error {
 
 // Get implements URLStorage.Get
 func (s *RedisStorage) Get(shortID string) (string, error) {
-	// Get URL from Redis
-	originalURL, err := s.client.Get(s.ctx, shortID).Result()
+	originalURL, err := s.client.Get(s.ctx, models.ShortIDKeyPrefix+shortID).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return "", ErrNotFound
 		}
-		return "", fmt.Errorf("failed to get URL from Redis: %w", err)
+		return "", fmt.Errorf("failed to get URL: %w", err)
 	}
 
-	// Reset TTL on access
-	s.client.Expire(s.ctx, shortID, s.ttl)
+	// refresh TTL when accessed
+	s.client.Expire(s.ctx, models.ShortIDKeyPrefix+shortID, s.ttl)
 
 	return originalURL, nil
 }
