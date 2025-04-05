@@ -97,8 +97,7 @@ func (s *PostgresStorage) FindShortIDByURL(originalURL string) (string, error) {
 	return shortID, nil
 }
 
-// Store implements URLStorage.Store
-func (s *PostgresStorage) Store(originalURL string) (string, error) {
+func (s *PostgresStorage) Find(originalURL string) (string, error) {
 	// This method simply calls FindShortIDByURL to check if the URL already exists
 	return s.FindShortIDByURL(originalURL)
 }
@@ -111,115 +110,24 @@ func (s *PostgresStorage) StoreWithID(shortID string, originalURL string) error 
 		return ErrInvalidURL
 	}
 
-	// First, check if this URL already exists
-	existingShortID, err := s.FindShortIDByURL(originalURL)
-	if err == nil {
-		// URL already exists with a different shortID
-		if existingShortID != shortID {
-			log.Info("URL already exists with different short ID, replacing",
-				zap.String("existingShortID", existingShortID),
-				zap.String("newShortID", shortID),
-				zap.String("url", originalURL))
+	// Use INSERT ... ON CONFLICT DO NOTHING for efficient upsert
+	_, err := s.db.Exec(
+		"INSERT INTO urls (short_id, original_url) VALUES ($1, $2) ON CONFLICT (original_url) DO NOTHING",
+		shortID, originalURL,
+	)
 
-			// Replace the existing mapping
-			return s.replaceURLMapping(existingShortID, shortID, originalURL)
-		}
-		// URL already exists with the same shortID, no-op
-		log.Debug("URL already exists with same short ID, no changes needed",
+	if err != nil {
+		log.Error("Failed to insert URL",
+			zap.Error(err),
 			zap.String("shortID", shortID),
 			zap.String("url", originalURL))
-		return nil
-	} else if err != ErrNotFound {
-		// An actual error occurred (not just "not found")
-		log.Error("Error checking for existing URL", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to insert URL: %w", err)
 	}
 
-	// URL doesn't exist, insert it
-	return s.withTransaction(func(tx *sql.Tx) error {
-		_, err := tx.Exec(
-			"INSERT INTO urls (short_id, original_url) VALUES ($1, $2)",
-			shortID, originalURL,
-		)
-		if err != nil {
-			log.Error("Failed to insert URL",
-				zap.Error(err),
-				zap.String("shortID", shortID),
-				zap.String("url", originalURL))
-			return fmt.Errorf("failed to insert URL: %w", err)
-		}
-
-		log.Debug("Inserted new URL",
-			zap.String("shortID", shortID),
-			zap.String("url", originalURL))
-		return nil
-	})
-}
-
-// withTransaction handles the boilerplate of transactions
-func (s *PostgresStorage) withTransaction(fn func(*sql.Tx) error) error {
-	log := logger.L()
-
-	// Start a transaction
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-
-	// Execute the function
-	err = fn(tx)
-
-	// If there was an error, rollback
-	if err != nil {
-		// Attempt to rollback, but don't override the original error
-		if rbErr := tx.Rollback(); rbErr != nil {
-			// Log rollback error but return the original error
-			log.Error("Error rolling back transaction", zap.Error(rbErr))
-		}
-		return err
-	}
-
-	// Otherwise commit
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
+	log.Debug("URL stored successfully",
+		zap.String("shortID", shortID),
+		zap.String("url", originalURL))
 	return nil
-}
-
-// replaceURLMapping handles the transaction to replace an existing URL mapping with a new one
-func (s *PostgresStorage) replaceURLMapping(existingShortID, newShortID, originalURL string) error {
-	log := logger.L()
-
-	return s.withTransaction(func(tx *sql.Tx) error {
-		// Delete the existing record for this original_url
-		_, err := tx.Exec("DELETE FROM urls WHERE short_id = $1", existingShortID)
-		if err != nil {
-			log.Error("Failed to delete existing record",
-				zap.Error(err),
-				zap.String("shortID", existingShortID))
-			return fmt.Errorf("failed to delete existing record: %w", err)
-		}
-
-		// Now insert the new record
-		_, err = tx.Exec(
-			"INSERT INTO urls (short_id, original_url) VALUES ($1, $2)",
-			newShortID, originalURL,
-		)
-		if err != nil {
-			log.Error("Failed to insert new record",
-				zap.Error(err),
-				zap.String("shortID", newShortID))
-			return fmt.Errorf("failed to insert new record: %w", err)
-		}
-
-		log.Info("Replaced URL mapping",
-			zap.String("oldShortID", existingShortID),
-			zap.String("newShortID", newShortID),
-			zap.String("url", originalURL))
-
-		return nil
-	})
 }
 
 // Get implements URLStorage.Get

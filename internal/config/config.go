@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -101,7 +102,11 @@ func Load() (*Config, error) {
 	if logger.L() != nil {
 		log = logger.L()
 	}
-	defer log.Sync()
+	defer func() {
+		if err := log.Sync(); err != nil {
+			fmt.Println("Error syncing log:", err)
+		}
+	}()
 
 	// Read config file if exists
 	err := v.ReadInConfig()

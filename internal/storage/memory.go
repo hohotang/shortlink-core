@@ -25,8 +25,7 @@ func NewMemoryStorage() *MemoryStorage {
 	}
 }
 
-// Store implements URLStorage.Store
-func (s *MemoryStorage) Store(originalURL string) (string, error) {
+func (s *MemoryStorage) Find(originalURL string) (string, error) {
 	log := logger.L()
 
 	if originalURL == "" {

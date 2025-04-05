@@ -90,8 +90,7 @@ func (s *RedisStorage) FindShortIDByURL(originalURL string) (string, error) {
 	return shortID, nil
 }
 
-// Store implements URLStorage.Store
-func (s *RedisStorage) Store(originalURL string) (string, error) {
+func (s *RedisStorage) Find(originalURL string) (string, error) {
 	// This method simply calls FindShortIDByURL to check if the URL already exists
 	return s.FindShortIDByURL(originalURL)
 }

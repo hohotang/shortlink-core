@@ -40,7 +40,7 @@ func NewCombinedStorage(redisURL string, cacheTTL int, cfg *config.Config) (*Com
 }
 
 // Store implements URLStorage.Store
-func (s *CombinedStorage) Store(originalURL string) (string, error) {
+func (s *CombinedStorage) Find(originalURL string) (string, error) {
 	log := logger.L()
 
 	if originalURL == "" {

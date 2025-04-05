@@ -13,9 +13,9 @@ var (
 
 // URLStorage defines the interface for URL storage
 type URLStorage interface {
-	// Store saves a URL and returns a short ID
+	// Find saves a URL and returns a short ID
 	// Note: Some implementations may not support this method directly
-	Store(originalURL string) (string, error)
+	Find(originalURL string) (string, error)
 
 	// StoreWithID saves a URL with a specific short ID
 	// Returns an error if the operation fails

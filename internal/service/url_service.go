@@ -150,7 +150,7 @@ func (s *URLService) findExistingShortID(ctx context.Context, originalURL string
 	_, span := s.tracer.Start(ctx, "URLService.findExistingShortID")
 	defer span.End()
 
-	shortID, err := s.storage.Store(originalURL)
+	shortID, err := s.storage.Find(originalURL)
 	if err == nil {
 		// Found existing short ID, log and return
 		log.Info("Found existing short ID",
