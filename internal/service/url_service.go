@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 
 	"github.com/hohotang/shortlink-core/internal/config"
+	"github.com/hohotang/shortlink-core/internal/logger"
 	"github.com/hohotang/shortlink-core/internal/models"
 	"github.com/hohotang/shortlink-core/internal/storage"
 	"github.com/hohotang/shortlink-core/internal/utils"
@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 )
 
 // Tracer 名稱
@@ -34,6 +35,8 @@ func NewURLService(cfg *config.Config) (*URLService, error) {
 	var store storage.URLStorage
 	var err error
 	var generator utils.IDGenerator
+
+	log := logger.L()
 
 	// Create a snowflake generator for ID generation
 	generator, err = utils.NewSnowflakeGenerator(cfg.Snowflake.MachineID)
@@ -74,6 +77,10 @@ func NewURLService(cfg *config.Config) (*URLService, error) {
 	// Initialize tracer
 	tracer := otel.Tracer(tracerName)
 
+	log.Info("URLService initialized",
+		zap.String("storage", string(cfg.Storage.Type)),
+		zap.String("baseURL", baseURL))
+
 	return &URLService{
 		storage:   store,
 		baseURL:   baseURL,
@@ -84,26 +91,10 @@ func NewURLService(cfg *config.Config) (*URLService, error) {
 
 // ShortenURL implements the ShortenURL RPC method
 func (s *URLService) ShortenURL(ctx context.Context, req *proto.ShortenURLRequest) (*proto.ShortenURLResponse, error) {
-	// Check if incoming context already has trace information
-	parentSpanContext := trace.SpanContextFromContext(ctx)
-	if parentSpanContext.IsValid() {
-		log.Printf("INCOMING context already has trace ID: %s, remote: %t",
-			parentSpanContext.TraceID().String(),
-			parentSpanContext.IsRemote())
-	} else {
-		log.Printf("INCOMING context has NO valid trace information")
-	}
-
 	// Create span with the correct trace option to ensure it links to the parent span
 	ctx, span := s.tracer.Start(ctx, "URLService.ShortenURL",
 		trace.WithAttributes(attribute.String("original_url", req.OriginalUrl)))
 	defer span.End()
-
-	// Show current trace ID for debugging
-	spanCtx := span.SpanContext()
-	if spanCtx.HasTraceID() {
-		log.Printf("Current trace ID: %s, parent: %t", spanCtx.TraceID().String(), spanCtx.IsRemote())
-	}
 
 	originalURL := req.OriginalUrl
 
@@ -155,13 +146,16 @@ func (s *URLService) validateURL(ctx context.Context, originalURL string) error 
 
 // findExistingShortID checks if a short link already exists for the URL
 func (s *URLService) findExistingShortID(ctx context.Context, originalURL string) (string, error) {
+	log := logger.L()
 	_, span := s.tracer.Start(ctx, "URLService.findExistingShortID")
 	defer span.End()
 
 	shortID, err := s.storage.Store(originalURL)
 	if err == nil {
 		// Found existing short ID, log and return
-		log.Printf("Found existing short ID %s for URL %s", shortID, originalURL)
+		log.Info("Found existing short ID",
+			zap.String("shortID", shortID),
+			zap.String("url", originalURL))
 		span.SetAttributes(attribute.String("existing_short_id", shortID))
 		return shortID, nil
 	}
@@ -174,11 +168,15 @@ func (s *URLService) findExistingShortID(ctx context.Context, originalURL string
 
 // generateAndStoreShortID creates a new short ID and stores it
 func (s *URLService) generateAndStoreShortID(ctx context.Context, originalURL string) (string, error) {
+	log := logger.L()
 	_, span := s.tracer.Start(ctx, "URLService.generateAndStoreShortID")
 	defer span.End()
 
 	// Use the generator's method to generate short ID
 	shortID := s.generator.GenerateShortID()
+	log.Info("Generated new short ID",
+		zap.String("shortID", shortID),
+		zap.String("url", originalURL))
 	span.SetAttributes(attribute.String("generated_short_id", shortID))
 
 	// Store the URL and generated short ID
@@ -200,6 +198,8 @@ func (s *URLService) buildResponse(shortID string) *proto.ShortenURLResponse {
 
 // ExpandURL implements the ExpandURL RPC method
 func (s *URLService) ExpandURL(ctx context.Context, req *proto.ExpandURLRequest) (*proto.ExpandURLResponse, error) {
+	log := logger.L()
+
 	_, span := s.tracer.Start(ctx, "URLService.ExpandURL",
 		trace.WithAttributes(attribute.String("short_id", req.ShortId)))
 	defer span.End()
@@ -207,7 +207,9 @@ func (s *URLService) ExpandURL(ctx context.Context, req *proto.ExpandURLRequest)
 	// Show current trace ID for debugging
 	spanCtx := span.SpanContext()
 	if spanCtx.HasTraceID() {
-		log.Printf("ExpandURL trace ID: %s, parent: %t", spanCtx.TraceID().String(), spanCtx.IsRemote())
+		log.Debug("ExpandURL trace ID",
+			zap.String("traceID", spanCtx.TraceID().String()),
+			zap.Bool("remote", spanCtx.IsRemote()))
 	}
 
 	// Get original URL from storage
@@ -217,11 +219,16 @@ func (s *URLService) ExpandURL(ctx context.Context, req *proto.ExpandURLRequest)
 		span.SetStatus(codes.Error, err.Error())
 
 		if err == storage.ErrNotFound {
+			log.Warn("Short URL not found", zap.String("shortID", req.ShortId))
 			return nil, fmt.Errorf("short URL not found: %s", req.ShortId)
 		}
+		log.Error("Failed to retrieve URL", zap.Error(err), zap.String("shortID", req.ShortId))
 		return nil, fmt.Errorf("failed to retrieve URL: %w", err)
 	}
 
+	log.Info("URL expanded",
+		zap.String("shortID", req.ShortId),
+		zap.String("originalURL", originalURL))
 	span.SetAttributes(attribute.String("original_url", originalURL))
 	return &proto.ExpandURLResponse{
 		OriginalUrl: originalURL,

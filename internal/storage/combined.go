@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/hohotang/shortlink-core/internal/config"
+	"github.com/hohotang/shortlink-core/internal/logger"
+	"go.uber.org/zap"
 )
 
 // CombinedStorage combines PostgreSQL and Redis for efficient storage
@@ -15,6 +17,8 @@ type CombinedStorage struct {
 
 // NewCombinedStorage creates a combined Redis+PostgreSQL storage
 func NewCombinedStorage(redisURL string, cacheTTL int, cfg *config.Config) (*CombinedStorage, error) {
+	log := logger.L()
+
 	redis, err := NewRedisStorage(redisURL, cacheTTL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Redis storage: %w", err)
@@ -22,6 +26,10 @@ func NewCombinedStorage(redisURL string, cacheTTL int, cfg *config.Config) (*Com
 
 	postgres, err := NewPostgresStorage(cfg)
 	if err != nil {
+		// Close Redis connection if PostgreSQL fails
+		if closeErr := redis.Close(); closeErr != nil {
+			log.Warn("Failed to close Redis connection", zap.Error(closeErr))
+		}
 		return nil, fmt.Errorf("failed to initialize PostgreSQL storage: %w", err)
 	}
 
@@ -33,6 +41,8 @@ func NewCombinedStorage(redisURL string, cacheTTL int, cfg *config.Config) (*Com
 
 // Store implements URLStorage.Store
 func (s *CombinedStorage) Store(originalURL string) (string, error) {
+	log := logger.L()
+
 	if originalURL == "" {
 		return "", ErrInvalidURL
 	}
@@ -44,7 +54,7 @@ func (s *CombinedStorage) Store(originalURL string) (string, error) {
 		return shortID, nil
 	} else if err != ErrNotFound {
 		// Redis error other than "not found" - non-critical, continue with PostgreSQL
-		fmt.Printf("Warning: error checking Redis for existing URL: %v\n", err)
+		log.Warn("Error checking Redis for existing URL", zap.Error(err))
 	}
 
 	// Not found in Redis or Redis error, check PostgreSQL
@@ -53,7 +63,7 @@ func (s *CombinedStorage) Store(originalURL string) (string, error) {
 		// URL exists in PostgreSQL but not in Redis - update Redis cache
 		if cacheErr := s.redis.StoreWithID(shortID, originalURL); cacheErr != nil {
 			// Log error but don't fail if Redis fails
-			fmt.Printf("Warning: failed to update Redis cache: %v\n", cacheErr)
+			log.Warn("Failed to update Redis cache", zap.Error(cacheErr))
 		}
 		return shortID, nil
 	} else if err != ErrNotFound {
@@ -67,6 +77,8 @@ func (s *CombinedStorage) Store(originalURL string) (string, error) {
 
 // StoreWithID stores a URL with a specific ID in both PostgreSQL and Redis
 func (s *CombinedStorage) StoreWithID(shortID string, originalURL string) error {
+	log := logger.L()
+
 	if originalURL == "" {
 		return ErrInvalidURL
 	}
@@ -79,7 +91,7 @@ func (s *CombinedStorage) StoreWithID(shortID string, originalURL string) error 
 	// Store in Redis (cache)
 	if err := s.redis.StoreWithID(shortID, originalURL); err != nil {
 		// Log error but don't fail if Redis fails
-		fmt.Printf("Warning: failed to store in Redis: %v\n", err)
+		log.Warn("Failed to store in Redis", zap.Error(err))
 	}
 
 	return nil
@@ -87,6 +99,8 @@ func (s *CombinedStorage) StoreWithID(shortID string, originalURL string) error 
 
 // Get retrieves a URL from Redis first, falling back to PostgreSQL
 func (s *CombinedStorage) Get(shortID string) (string, error) {
+	log := logger.L()
+
 	// Try to get from Redis first
 	originalURL, err := s.redis.Get(shortID)
 	if err == nil {
@@ -103,7 +117,7 @@ func (s *CombinedStorage) Get(shortID string) (string, error) {
 	// Found in PostgreSQL, update Redis cache
 	if cacheErr := s.redis.StoreWithID(shortID, originalURL); cacheErr != nil {
 		// Log error but don't fail if Redis fails
-		fmt.Printf("Warning: failed to update Redis cache: %v\n", cacheErr)
+		log.Warn("Failed to update Redis cache", zap.Error(cacheErr))
 	}
 
 	return originalURL, nil

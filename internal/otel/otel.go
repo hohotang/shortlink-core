@@ -3,10 +3,11 @@ package otel
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/hohotang/shortlink-core/internal/logger"
 	"go.opentelemetry.io/otel"
+
 	// "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -15,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.20.0"
+	"go.uber.org/zap"
 )
 
 // Config holds configuration for OpenTelemetry
@@ -93,15 +95,17 @@ func InitTracer(cfg Config) (shutdown func(context.Context) error, err error) {
 
 	// Return a shutdown function that will flush and shutdown the providers
 	return func(ctx context.Context) error {
+		log := logger.L()
+
 		// Shutdown trace provider
 		if err := tracerProvider.Shutdown(ctx); err != nil {
-			log.Printf("Error shutting down tracer provider: %v", err)
+			log.Warn("Error shutting down tracer provider", zap.Error(err))
 		}
 
 		/* Metrics shutdown commented out
 		// Shutdown metric provider
 		if err := metricProvider.Shutdown(ctx); err != nil {
-			log.Printf("Error shutting down meter provider: %v", err)
+			log.Warn("Error shutting down meter provider", zap.Error(err))
 		}
 		*/
 
