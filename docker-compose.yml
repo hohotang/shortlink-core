@@ -21,23 +21,11 @@ services:
     restart: unless-stopped
     networks:
       - shortlink-network
-    # image: postgres:14.7
-    # ports:
-    #   - "5432:5432"
-    # environment:
-    #   LC_COLLATE: 'en_US.UTF-8'
-    #   POSTGRES_DB: gama
-    #   POSTGRES_USER: gama
-    #   POSTGRES_PASSWORD: gama
-    #   PGDATA: /var/lib/postgresql/data/pgdata
-    # volumes:
-    #   - gamaacct_db_data:/var/lib/postgresql/data
-    # Redis cache service
   redis:
     image: redis:latest
     container_name: shortlink-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -78,6 +66,7 @@ services:
       SHORTLINK_SERVER_BASE_URL: "http://localhost:8080/"
       SHORTLINK_TELEMETRY_ENABLED: true
       SHORTLINK_TELEMETRY_OTLP_ENDPOINT: "tempo:4318"
+      SHORTLINK_TELEMETRY_ENVIRONMENT: "docker"
     ports:
       - "50051:50051"
     restart: unless-stopped

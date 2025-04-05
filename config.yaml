@@ -5,7 +5,7 @@ server:
 storage:
   # Available options: memory, redis, postgres, both (both redis and postgres)
   type: both
-  redis_url: redis://localhost:6379
+  redis_url: redis://localhost:6380
   postgres:
     host: localhost
     port: 5433
@@ -26,4 +26,4 @@ telemetry:
   enabled: true
   otlp_endpoint: "localhost:4318"  # Only specify host:port, path will be added by the client
   service_name: "shortlink-core"
-  environment: "development" 
+  environment: "dev" 
