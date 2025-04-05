@@ -17,6 +17,32 @@ This is the **Core Service** for the distributed URL shortener system. It handle
   - Combined PostgreSQL + Redis for optimal performance
 - Configuration using **Viper** with YAML and environment variables
 
+## 🔄 System Architecture
+
+This service is part of a distributed URL shortener system consisting of multiple components:
+
+### Relationship with shortlink-gateway
+
+The **shortlink-core** service works together with [shortlink-gateway](https://github.com/hohotang/shortlink-gateway) in a microservices architecture:
+
+- **shortlink-core** (this repository): The backend service that handles URL shortening and expansion through gRPC
+- **shortlink-gateway**: API Gateway that exposes HTTP REST endpoints to clients and communicates with this core service via gRPC
+```
+┌─────────────┐        gRPC        ┌─────────────┐
+│ API GATEWAY │───────────────────→│ CORE SERVICE│
+└─────────────┘                    └─────────────┘
+  (this repo)                      (shortlink-core)
+```
+
+#### Service Communication Flow
+
+1. Clients make HTTP requests to the **shortlink-gateway** REST API
+2. The gateway forwards these requests to **shortlink-core** using gRPC
+3. **shortlink-core** processes the requests and returns responses to the gateway
+4. The gateway transforms the responses and sends them back to clients
+
+Both services implement OpenTelemetry tracing, allowing for end-to-end request tracking across the distributed system.
+
 ## 🧱 Project Structure
 
 ```
@@ -91,15 +117,6 @@ docker-compose up -d postgres redis
 docker-compose ps
 ```
 
-To include the shortlink-core service in Docker Compose:
-
-1. Uncomment the `shortlink-core` service in `docker-compose.yml`
-2. Run:
-```bash
-# Build and start all services including shortlink-core
-docker-compose up -d --build
-```
-
 ### Connection Information
 
 - PostgreSQL: localhost:5433 (user: postgres, password: postgres, database: shortlink)
@@ -144,7 +161,7 @@ These numeric IDs are then encoded to Base62 (0-9, a-z, A-Z) for shorter represe
 - [x] Add unit tests
 - [ ] Add integration tests with the API Gateway
 - [x] Add OpenTelemetry tracing
-- [ ] Add metrics collection
+- [ ] Add metrics collection (temporarily disabled due to endpoint issues)
 - [ ] Use pod IP for machine ID in Kubernetes environments 
 - [ ] Implement better error handling
-- [ ] Implement better log
+- [ ] Implement better logging
