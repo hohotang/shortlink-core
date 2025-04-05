@@ -20,3 +20,10 @@ storage:
 
 snowflake:
   machine_id: 1 
+
+# OpenTelemetry configuration
+telemetry:
+  enabled: true
+  otlp_endpoint: "localhost:4318"  # Only specify host:port, path will be added by the client
+  service_name: "shortlink-core"
+  environment: "development" 

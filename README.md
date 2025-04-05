@@ -50,7 +50,7 @@ shortlink-core/
 
 ### Prerequisites
 
-- Go 1.18+
+- Go 1.24+
 - PostgreSQL (optional)
 - Redis (optional)
 - Docker (optional)
@@ -77,13 +77,42 @@ snowflake:
 ### Run locally
 
 ```bash
+# Run the service directly with Go
 go run ./cmd/server
 ```
 
-### Run with Docker
+### Run with Docker Compose
 
 ```bash
+# Start PostgreSQL and Redis services
+docker-compose up -d postgres redis
+
+# Check service status
+docker-compose ps
+```
+
+To include the shortlink-core service in Docker Compose:
+
+1. Uncomment the `shortlink-core` service in `docker-compose.yml`
+2. Run:
+```bash
+# Build and start all services including shortlink-core
+docker-compose up -d --build
+```
+
+### Connection Information
+
+- PostgreSQL: localhost:5433 (user: postgres, password: postgres, database: shortlink)
+- Redis: localhost:6379
+- shortlink-core gRPC (when enabled): localhost:50051
+
+### Run individual container (alternative)
+
+```bash
+# Build the container
 docker build -t shortlink-core .
+
+# Run the container
 docker run -p 50051:50051 shortlink-core
 ```
 
@@ -114,7 +143,7 @@ These numeric IDs are then encoded to Base62 (0-9, a-z, A-Z) for shorter represe
 
 - [x] Add unit tests
 - [ ] Add integration tests with the API Gateway
-- [ ] Add OpenTelemetry tracing
+- [x] Add OpenTelemetry tracing
 - [ ] Add metrics collection
 - [ ] Use pod IP for machine ID in Kubernetes environments 
 - [ ] Implement better error handling

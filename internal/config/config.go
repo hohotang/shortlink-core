@@ -14,6 +14,7 @@ type Config struct {
 	Server    ServerConfig    `mapstructure:"server"`
 	Storage   StorageConfig   `mapstructure:"storage"`
 	Snowflake SnowflakeConfig `mapstructure:"snowflake"`
+	Telemetry TelemetryConfig `mapstructure:"telemetry"`
 }
 
 // ServerConfig represents the server configuration
@@ -49,6 +50,14 @@ type SnowflakeConfig struct {
 	MachineID int64 `mapstructure:"machine_id"`
 }
 
+// TelemetryConfig represents the OpenTelemetry configuration
+type TelemetryConfig struct {
+	Enabled      bool   `mapstructure:"enabled"`       // Whether telemetry is enabled
+	OTLPEndpoint string `mapstructure:"otlp_endpoint"` // OTLP endpoint (e.g., localhost:4317)
+	ServiceName  string `mapstructure:"service_name"`  // Name of this service
+	Environment  string `mapstructure:"environment"`   // Deployment environment (e.g., production, development)
+}
+
 // Load loads the configuration using Viper
 func Load() (*Config, error) {
 	v := viper.New()
@@ -75,6 +84,12 @@ func Load() (*Config, error) {
 
 	v.SetDefault("storage.cache_ttl", 3600) // 1 hour
 	v.SetDefault("snowflake.machine_id", 1)
+
+	// Telemetry defaults
+	v.SetDefault("telemetry.enabled", false)
+	v.SetDefault("telemetry.otlp_endpoint", "localhost:4317")
+	v.SetDefault("telemetry.service_name", "shortlink-core")
+	v.SetDefault("telemetry.environment", "development")
 
 	// Add multiple search paths for config file
 	v.SetConfigName("config") // config.yaml
