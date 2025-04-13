@@ -164,4 +164,4 @@ These numeric IDs are then encoded to Base62 (0-9, a-z, A-Z) for shorter represe
 - [ ] Add metrics collection (temporarily disabled due to endpoint issues)
 - [ ] Use pod IP for machine ID in Kubernetes environments 
 - [ ] Implement better error handling
-- [ ] Implement better logging
+- [ ] Implement better logging, inject logger instead of using global logger
