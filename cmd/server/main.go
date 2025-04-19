@@ -11,6 +11,7 @@ import (
 
 	"github.com/hohotang/shortlink-core/internal/config"
 	"github.com/hohotang/shortlink-core/internal/logger"
+	"github.com/hohotang/shortlink-core/internal/middleware"
 	"github.com/hohotang/shortlink-core/internal/otel"
 	"github.com/hohotang/shortlink-core/internal/service"
 	"github.com/hohotang/shortlink-core/proto"
@@ -77,16 +78,19 @@ func main() {
 					propagation.Baggage{},
 				)),
 			)),
+			grpc.UnaryInterceptor(middleware.LoggerInterceptor(log)),
 		)
-		log.Info("gRPC server created with OpenTelemetry integration")
+		log.Info("gRPC server created with OpenTelemetry integration and logger interceptor")
 	} else {
 		// Without OpenTelemetry
-		grpcServer = grpc.NewServer()
-		log.Info("gRPC server created without OpenTelemetry integration")
+		grpcServer = grpc.NewServer(
+			grpc.UnaryInterceptor(middleware.LoggerInterceptor(log)),
+		)
+		log.Info("gRPC server created with logger interceptor")
 	}
 
 	// Create URL service
-	urlService, err := service.NewURLService(cfg)
+	urlService, err := service.NewURLService(cfg, log)
 	if err != nil {
 		log.Fatal("Failed to create URL service", zap.Error(err))
 	}

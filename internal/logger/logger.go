@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"strings"
 
 	"go.uber.org/zap"
@@ -8,6 +9,21 @@ import (
 )
 
 var log *zap.Logger
+
+type contextKey struct{}
+
+var loggerContextKey = contextKey{}
+
+func WithContext(ctx context.Context, log *zap.Logger) context.Context {
+	return context.WithValue(ctx, loggerContextKey, log)
+}
+
+func FromContext(ctx context.Context) *zap.Logger {
+	if log, ok := ctx.Value(loggerContextKey).(*zap.Logger); ok {
+		return log
+	}
+	return L() // fallback to global
+}
 
 // Init initializes the global logger
 func Init(serviceName string, env string) {

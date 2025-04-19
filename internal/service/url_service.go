@@ -28,15 +28,14 @@ type URLService struct {
 	baseURL   string
 	generator utils.IDGenerator
 	tracer    trace.Tracer
+	logger    *zap.Logger
 }
 
 // NewURLService creates a new URLService instance
-func NewURLService(cfg *config.Config) (*URLService, error) {
+func NewURLService(cfg *config.Config, log *zap.Logger) (*URLService, error) {
 	var store storage.URLStorage
 	var err error
 	var generator utils.IDGenerator
-
-	log := logger.L()
 
 	// Create a snowflake generator for ID generation
 	generator, err = utils.NewSnowflakeGenerator(cfg.Snowflake.MachineID)
@@ -86,11 +85,15 @@ func NewURLService(cfg *config.Config) (*URLService, error) {
 		baseURL:   baseURL,
 		generator: generator,
 		tracer:    tracer,
+		logger:    log,
 	}, nil
 }
 
 // ShortenURL implements the ShortenURL RPC method
 func (s *URLService) ShortenURL(ctx context.Context, req *proto.ShortenURLRequest) (*proto.ShortenURLResponse, error) {
+	// Get request-scoped logger if available
+	log := logger.FromContext(ctx)
+
 	// Create span with the correct trace option to ensure it links to the parent span
 	ctx, span := s.tracer.Start(ctx, "URLService.ShortenURL",
 		trace.WithAttributes(attribute.String("original_url", req.OriginalUrl)))
@@ -119,6 +122,7 @@ func (s *URLService) ShortenURL(ctx context.Context, req *proto.ShortenURLReques
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
+			log.Error("Failed to generate and store short ID", zap.Error(err), zap.String("originalURL", originalURL))
 			return nil, err
 		}
 		span.SetAttributes(attribute.Bool("new_short_id_generated", true))
@@ -134,19 +138,23 @@ func (s *URLService) ShortenURL(ctx context.Context, req *proto.ShortenURLReques
 
 // validateURL checks if the URL is valid
 func (s *URLService) validateURL(ctx context.Context, originalURL string) error {
+	log := logger.FromContext(ctx)
 	_, span := s.tracer.Start(ctx, "URLService.validateURL")
 	defer span.End()
 
 	if _, err := url.ParseRequestURI(originalURL); err != nil {
+		log.Warn("Invalid URL provided", zap.String("url", originalURL), zap.Error(err))
 		span.RecordError(err)
 		return fmt.Errorf("invalid URL: %w", err)
 	}
+
+	log.Debug("URL validated successfully", zap.String("url", originalURL))
 	return nil
 }
 
 // findExistingShortID checks if a short link already exists for the URL
 func (s *URLService) findExistingShortID(ctx context.Context, originalURL string) (string, error) {
-	log := logger.L()
+	log := logger.FromContext(ctx)
 	_, span := s.tracer.Start(ctx, "URLService.findExistingShortID")
 	defer span.End()
 
@@ -161,14 +169,18 @@ func (s *URLService) findExistingShortID(ctx context.Context, originalURL string
 	}
 
 	if err != storage.ErrNotFound {
+		log.Error("Error finding existing short ID", zap.Error(err), zap.String("url", originalURL))
 		span.RecordError(err)
+	} else {
+		log.Debug("No existing short ID found", zap.String("url", originalURL))
 	}
+
 	return "", err
 }
 
 // generateAndStoreShortID creates a new short ID and stores it
 func (s *URLService) generateAndStoreShortID(ctx context.Context, originalURL string) (string, error) {
-	log := logger.L()
+	log := logger.FromContext(ctx)
 	_, span := s.tracer.Start(ctx, "URLService.generateAndStoreShortID")
 	defer span.End()
 
@@ -181,10 +193,14 @@ func (s *URLService) generateAndStoreShortID(ctx context.Context, originalURL st
 
 	// Store the URL and generated short ID
 	if err := s.storage.StoreWithID(shortID, originalURL); err != nil {
+		log.Error("Failed to store URL", zap.Error(err), zap.String("shortID", shortID))
 		span.RecordError(err)
 		return "", fmt.Errorf("failed to store URL: %w", err)
 	}
 
+	log.Debug("Successfully stored URL with short ID",
+		zap.String("shortID", shortID),
+		zap.String("url", originalURL))
 	return shortID, nil
 }
 
@@ -198,7 +214,7 @@ func (s *URLService) buildResponse(shortID string) *proto.ShortenURLResponse {
 
 // ExpandURL implements the ExpandURL RPC method
 func (s *URLService) ExpandURL(ctx context.Context, req *proto.ExpandURLRequest) (*proto.ExpandURLResponse, error) {
-	log := logger.L()
+	log := logger.FromContext(ctx)
 
 	_, span := s.tracer.Start(ctx, "URLService.ExpandURL",
 		trace.WithAttributes(attribute.String("short_id", req.ShortId)))
