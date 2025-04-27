@@ -78,15 +78,21 @@ func main() {
 					propagation.Baggage{},
 				)),
 			)),
-			grpc.UnaryInterceptor(middleware.LoggerInterceptor(log)),
+			grpc.UnaryInterceptor(middleware.ChainUnaryInterceptors(
+				middleware.PanicRecoveryInterceptor(log),
+				middleware.LoggerInterceptor(log),
+			)),
 		)
-		log.Info("gRPC server created with OpenTelemetry integration and logger interceptor")
+		log.Info("gRPC server created with OpenTelemetry integration and interceptors")
 	} else {
 		// Without OpenTelemetry
 		grpcServer = grpc.NewServer(
-			grpc.UnaryInterceptor(middleware.LoggerInterceptor(log)),
+			grpc.UnaryInterceptor(middleware.ChainUnaryInterceptors(
+				middleware.PanicRecoveryInterceptor(log),
+				middleware.LoggerInterceptor(log),
+			)),
 		)
-		log.Info("gRPC server created with logger interceptor")
+		log.Info("gRPC server created with interceptors")
 	}
 
 	// Create URL service
