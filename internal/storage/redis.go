@@ -90,95 +90,44 @@ func (s *RedisStorage) FindShortIDByURL(originalURL string) (string, error) {
 	return shortID, nil
 }
 
-func (s *RedisStorage) Find(originalURL string) (string, error) {
-	// This method simply calls FindShortIDByURL to check if the URL already exists
-	return s.FindShortIDByURL(originalURL)
+// Find implements URLStorage.Find
+func (s *RedisStorage) Find(ctx context.Context, originalURL string) (string, error) {
+	if originalURL == "" {
+		return "", ErrInvalidURL
+	}
+
+	shortID, err := s.client.Get(ctx, originalURL).Result()
+	if err == redis.Nil {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get URL from Redis: %w", err)
+	}
+	return shortID, nil
 }
 
 // StoreWithID implements URLStorage.StoreWithID
-func (s *RedisStorage) StoreWithID(shortID string, originalURL string) error {
-	log := logger.L()
-
+func (s *RedisStorage) StoreWithID(ctx context.Context, shortID string, originalURL string) error {
 	if originalURL == "" {
 		return ErrInvalidURL
 	}
 
-	// First check if this URL already exists in Redis with a different short ID
-	existingShortID, err := s.FindShortIDByURL(originalURL)
-	if err == nil && existingShortID != shortID {
-		// URL exists with a different short ID - need to update both mappings
-		log.Info("URL already exists in Redis with different short ID, updating",
-			zap.String("existingShortID", existingShortID),
-			zap.String("newShortID", shortID),
-			zap.String("url", originalURL))
-
-		// Use a pipeline for atomic updates
-		pipe := s.client.Pipeline()
-
-		// Remove old short ID entry
-		pipe.Del(s.ctx, models.ShortIDKeyPrefix+existingShortID)
-
-		// Add bidirectional mapping for new short ID
-		pipe.Set(s.ctx, models.ShortIDKeyPrefix+shortID, originalURL, s.ttl)
-		pipe.HSet(s.ctx, models.ReverseURLsKey, originalURL, shortID)
-
-		// Execute pipeline
-		_, err = pipe.Exec(s.ctx)
-		if err != nil {
-			log.Error("Failed to update Redis mappings", zap.Error(err))
-			return fmt.Errorf("failed to update Redis mappings: %w", err)
-		}
-
-		return nil
-	} else if err != nil && err != ErrNotFound {
-		// Real error occurred, not just "not found"
-		return err
-	}
-
-	// URL doesn't exist or already has the same short ID
-	// In either case, just store the bidirectional mapping
-	pipe := s.client.Pipeline()
-	pipe.Set(s.ctx, models.ShortIDKeyPrefix+shortID, originalURL, s.ttl)
-	pipe.HSet(s.ctx, models.ReverseURLsKey, originalURL, shortID)
-
-	_, err = pipe.Exec(s.ctx)
+	err := s.client.Set(ctx, shortID, originalURL, s.ttl).Err()
 	if err != nil {
-		log.Error("Failed to store URL in Redis", zap.Error(err))
 		return fmt.Errorf("failed to store URL in Redis: %w", err)
 	}
-
-	log.Debug("Stored URL in Redis",
-		zap.String("shortID", shortID),
-		zap.String("url", originalURL))
 	return nil
 }
 
 // Get implements URLStorage.Get
-func (s *RedisStorage) Get(shortID string) (string, error) {
-	log := logger.L()
-
-	originalURL, err := s.client.Get(s.ctx, models.ShortIDKeyPrefix+shortID).Result()
+func (s *RedisStorage) Get(ctx context.Context, shortID string) (string, error) {
+	originalURL, err := s.client.Get(ctx, shortID).Result()
+	if err == redis.Nil {
+		return "", ErrNotFound
+	}
 	if err != nil {
-		if err == redis.Nil {
-			log.Debug("Short ID not found in Redis", zap.String("shortID", shortID))
-			return "", ErrNotFound
-		}
-		log.Error("Failed to get URL from Redis", zap.Error(err), zap.String("shortID", shortID))
 		return "", fmt.Errorf("failed to get URL from Redis: %w", err)
 	}
-
-	// Refresh the TTL
-	if err := s.client.Expire(s.ctx, models.ShortIDKeyPrefix+shortID, s.ttl).Err(); err != nil {
-		// Non-fatal error, just log it
-		log.Warn("Failed to refresh TTL in Redis",
-			zap.Error(err),
-			zap.String("shortID", shortID))
-	}
-
-	log.Debug("Retrieved URL from Redis",
-		zap.String("shortID", shortID),
-		zap.String("url", originalURL))
-
 	return originalURL, nil
 }
 

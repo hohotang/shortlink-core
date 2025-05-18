@@ -1,18 +1,21 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
 	"github.com/hohotang/shortlink-core/internal/config"
 	"github.com/hohotang/shortlink-core/internal/logger"
+	"github.com/hohotang/shortlink-core/internal/storage/postgres/db"
 	_ "github.com/lib/pq"
 	"go.uber.org/zap"
 )
 
 // PostgresStorage implements URLStorage with PostgreSQL
 type PostgresStorage struct {
-	db *sql.DB
+	db      *sql.DB
+	queries *db.Queries
 }
 
 // NewPostgresStorage creates a new PostgresStorage instance
@@ -34,54 +37,54 @@ func NewPostgresStorage(cfg *config.Config) (*PostgresStorage, error) {
 		log.Info("Using legacy postgres_url config. Consider updating to the new postgres configuration format.")
 	}
 
-	db, err := sql.Open("postgres", connStr)
+	database, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
 
 	// Configure connection pool
 	if pgConfig.MaxOpenConns > 0 {
-		db.SetMaxOpenConns(pgConfig.MaxOpenConns)
+		database.SetMaxOpenConns(pgConfig.MaxOpenConns)
 		log.Info("PostgreSQL connection pool: max open connections set",
 			zap.Int("maxOpenConns", pgConfig.MaxOpenConns))
 	}
 
 	if pgConfig.MaxIdleConns > 0 {
-		db.SetMaxIdleConns(pgConfig.MaxIdleConns)
+		database.SetMaxIdleConns(pgConfig.MaxIdleConns)
 		log.Info("PostgreSQL connection pool: max idle connections set",
 			zap.Int("maxIdleConns", pgConfig.MaxIdleConns))
 	}
 
 	if pgConfig.ConnMaxLifetime > 0 {
-		db.SetConnMaxLifetime(pgConfig.ConnMaxLifetime)
+		database.SetConnMaxLifetime(pgConfig.ConnMaxLifetime)
 		log.Info("PostgreSQL connection pool: connection max lifetime set",
 			zap.Duration("maxLifetime", pgConfig.ConnMaxLifetime))
 	}
 
 	// Test connection
-	if err := db.Ping(); err != nil {
+	if err := database.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
 	}
 
+	queries := db.New(database)
+
 	log.Info("PostgreSQL connection established")
 
-	return &PostgresStorage{db: db}, nil
+	return &PostgresStorage{
+		db:      database,
+		queries: queries,
+	}, nil
 }
 
 // FindShortIDByURL checks if a URL already has a short ID
-func (s *PostgresStorage) FindShortIDByURL(originalURL string) (string, error) {
+func (s *PostgresStorage) FindShortIDByURL(ctx context.Context, originalURL string) (string, error) {
 	log := logger.L()
 
 	if originalURL == "" {
 		return "", ErrInvalidURL
 	}
 
-	var shortID string
-	err := s.db.QueryRow(
-		"SELECT short_id FROM urls WHERE original_url = $1 LIMIT 1",
-		originalURL,
-	).Scan(&shortID)
-
+	shortID, err := s.queries.FindShortIDByURL(ctx, originalURL)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Debug("No existing short ID found for URL", zap.String("url", originalURL))
@@ -97,24 +100,23 @@ func (s *PostgresStorage) FindShortIDByURL(originalURL string) (string, error) {
 	return shortID, nil
 }
 
-func (s *PostgresStorage) Find(originalURL string) (string, error) {
+func (s *PostgresStorage) Find(ctx context.Context, originalURL string) (string, error) {
 	// This method simply calls FindShortIDByURL to check if the URL already exists
-	return s.FindShortIDByURL(originalURL)
+	return s.FindShortIDByURL(ctx, originalURL)
 }
 
 // StoreWithID implements URLStorage.StoreWithID
-func (s *PostgresStorage) StoreWithID(shortID string, originalURL string) error {
+func (s *PostgresStorage) StoreWithID(ctx context.Context, shortID string, originalURL string) error {
 	log := logger.L()
 
 	if originalURL == "" {
 		return ErrInvalidURL
 	}
 
-	// Use INSERT ... ON CONFLICT DO NOTHING for efficient upsert
-	_, err := s.db.Exec(
-		"INSERT INTO urls (short_id, original_url) VALUES ($1, $2) ON CONFLICT (original_url) DO NOTHING",
-		shortID, originalURL,
-	)
+	err := s.queries.StoreWithID(ctx, db.StoreWithIDParams{
+		ShortID:     shortID,
+		OriginalUrl: originalURL,
+	})
 
 	if err != nil {
 		log.Error("Failed to insert URL",
@@ -131,16 +133,10 @@ func (s *PostgresStorage) StoreWithID(shortID string, originalURL string) error 
 }
 
 // Get implements URLStorage.Get
-func (s *PostgresStorage) Get(shortID string) (string, error) {
+func (s *PostgresStorage) Get(ctx context.Context, shortID string) (string, error) {
 	log := logger.L()
-	var originalURL string
 
-	// Query the URL and update last_accessed
-	err := s.db.QueryRow(
-		"UPDATE urls SET last_accessed = NOW() WHERE short_id = $1 RETURNING original_url",
-		shortID,
-	).Scan(&originalURL)
-
+	originalURL, err := s.queries.GetURL(ctx, shortID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Debug("Short ID not found", zap.String("shortID", shortID))

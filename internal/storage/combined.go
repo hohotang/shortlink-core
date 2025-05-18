@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/hohotang/shortlink-core/internal/config"
@@ -13,6 +14,7 @@ import (
 type CombinedStorage struct {
 	postgres *PostgresStorage
 	redis    *RedisStorage
+	logger   *zap.Logger
 }
 
 // NewCombinedStorage creates a combined Redis+PostgreSQL storage
@@ -36,91 +38,80 @@ func NewCombinedStorage(redisURL string, cacheTTL int, cfg *config.Config) (*Com
 	return &CombinedStorage{
 		redis:    redis,
 		postgres: postgres,
+		logger:   log,
 	}, nil
 }
 
-// Store implements URLStorage.Store
-func (s *CombinedStorage) Find(originalURL string) (string, error) {
-	log := logger.L()
-
+// Find implements URLStorage.Find
+func (s *CombinedStorage) Find(ctx context.Context, originalURL string) (string, error) {
 	if originalURL == "" {
 		return "", ErrInvalidURL
 	}
 
-	// First check in Redis (cache) if the URL already exists
-	shortID, err := s.redis.FindShortIDByURL(originalURL)
+	// Try Redis first
+	shortID, err := s.redis.Find(ctx, originalURL)
 	if err == nil {
-		// URL already exists in Redis cache
 		return shortID, nil
 	} else if err != ErrNotFound {
 		// Redis error other than "not found" - non-critical, continue with PostgreSQL
-		log.Warn("Error checking Redis for existing URL", zap.Error(err))
+		s.logger.Warn("Error checking Redis for existing URL", zap.Error(err))
 	}
 
-	// Not found in Redis or Redis error, check PostgreSQL
-	shortID, err = s.postgres.FindShortIDByURL(originalURL)
-	if err == nil {
-		// URL exists in PostgreSQL but not in Redis - update Redis cache
-		if cacheErr := s.redis.StoreWithID(shortID, originalURL); cacheErr != nil {
-			// Log error but don't fail if Redis fails
-			log.Warn("Failed to update Redis cache", zap.Error(cacheErr))
-		}
-		return shortID, nil
-	} else if err != ErrNotFound {
-		// PostgreSQL error other than "not found"
-		return "", err
-	} else {
-		// Not found in either storage
-		return "", ErrNotFound
-	}
-}
-
-// StoreWithID stores a URL with a specific ID in both PostgreSQL and Redis
-func (s *CombinedStorage) StoreWithID(shortID string, originalURL string) error {
-	log := logger.L()
-
-	if originalURL == "" {
-		return ErrInvalidURL
-	}
-
-	// Store in PostgreSQL first (persistent storage)
-	if err := s.postgres.StoreWithID(shortID, originalURL); err != nil {
-		return fmt.Errorf("failed to store in PostgreSQL: %w", err)
-	}
-
-	// Store in Redis (cache)
-	if err := s.redis.StoreWithID(shortID, originalURL); err != nil {
-		// Log error but don't fail if Redis fails
-		log.Warn("Failed to store in Redis", zap.Error(err))
-	}
-
-	return nil
-}
-
-// Get retrieves a URL from Redis first, falling back to PostgreSQL
-func (s *CombinedStorage) Get(shortID string) (string, error) {
-	log := logger.L()
-
-	// Try to get from Redis first
-	originalURL, err := s.redis.Get(shortID)
-	if err == nil {
-		// Found in Redis
-		return originalURL, nil
-	}
-
-	// Not found in Redis or Redis error, try PostgreSQL
-	originalURL, err = s.postgres.Get(shortID)
+	// Try PostgreSQL
+	shortID, err = s.postgres.Find(ctx, originalURL)
 	if err != nil {
 		return "", err
 	}
 
 	// Found in PostgreSQL, update Redis cache
-	if cacheErr := s.redis.StoreWithID(shortID, originalURL); cacheErr != nil {
+	if cacheErr := s.redis.StoreWithID(ctx, shortID, originalURL); cacheErr != nil {
 		// Log error but don't fail if Redis fails
-		log.Warn("Failed to update Redis cache", zap.Error(cacheErr))
+		s.logger.Warn("Failed to update Redis cache", zap.Error(cacheErr))
+	}
+	return shortID, nil
+}
+
+// StoreWithID implements URLStorage.StoreWithID
+func (s *CombinedStorage) StoreWithID(ctx context.Context, shortID string, originalURL string) error {
+	if originalURL == "" {
+		return ErrInvalidURL
 	}
 
-	return originalURL, nil
+	// Store in PostgreSQL
+	if err := s.postgres.StoreWithID(ctx, shortID, originalURL); err != nil {
+		return err
+	}
+
+	// Try to store in Redis
+	if err := s.redis.StoreWithID(ctx, shortID, originalURL); err != nil {
+		// Log error but don't fail if Redis fails
+		s.logger.Warn("Failed to store in Redis", zap.Error(err))
+	}
+
+	return nil
+}
+
+// Get implements URLStorage.Get
+func (s *CombinedStorage) Get(ctx context.Context, shortID string) (string, error) {
+	// Try cache first
+	url, err := s.redis.Get(ctx, shortID)
+	if err == nil {
+		return url, nil
+	}
+
+	// Not found in Redis or Redis error, try PostgreSQL
+	url, err = s.postgres.Get(ctx, shortID)
+	if err != nil {
+		return "", err
+	}
+
+	// Found in PostgreSQL, update Redis cache
+	if cacheErr := s.redis.StoreWithID(ctx, shortID, url); cacheErr != nil {
+		// Log error but don't fail if Redis fails
+		s.logger.Warn("Failed to update Redis cache", zap.Error(cacheErr))
+	}
+
+	return url, nil
 }
 
 // Close closes both PostgreSQL and Redis connections

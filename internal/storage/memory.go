@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 
 	"github.com/hohotang/shortlink-core/internal/logger"
@@ -25,34 +26,23 @@ func NewMemoryStorage() *MemoryStorage {
 	}
 }
 
-func (s *MemoryStorage) Find(originalURL string) (string, error) {
-	log := logger.L()
-
+// Find implements URLStorage.Find
+func (s *MemoryStorage) Find(ctx context.Context, originalURL string) (string, error) {
 	if originalURL == "" {
 		return "", ErrInvalidURL
 	}
 
-	// Check if the URL has already been shortened
 	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
 	if shortID, exists := s.reverseUrls[originalURL]; exists {
-		s.mutex.RUnlock()
-		log.Debug("Found existing short ID in memory",
-			zap.String("shortID", shortID),
-			zap.String("url", originalURL))
 		return shortID, nil
 	}
-	s.mutex.RUnlock()
-
-	// If URL doesn't exist, return not found error
-	// The ID will be generated at service layer
-	log.Debug("No existing short ID found in memory", zap.String("url", originalURL))
 	return "", ErrNotFound
 }
 
 // StoreWithID implements URLStorage.StoreWithID
-func (s *MemoryStorage) StoreWithID(shortID string, originalURL string) error {
-	log := logger.L()
-
+func (s *MemoryStorage) StoreWithID(ctx context.Context, shortID string, originalURL string) error {
 	if originalURL == "" {
 		return ErrInvalidURL
 	}
@@ -64,6 +54,7 @@ func (s *MemoryStorage) StoreWithID(shortID string, originalURL string) error {
 	if existingShortID, exists := s.reverseUrls[originalURL]; exists && existingShortID != shortID {
 		// We already have a different shortID for this URL, but we'll override it as requested
 		// Remove the old mapping first
+		log := logger.L()
 		log.Info("URL already exists with different short ID, updating",
 			zap.String("existingID", existingShortID),
 			zap.String("newID", shortID),
@@ -74,6 +65,7 @@ func (s *MemoryStorage) StoreWithID(shortID string, originalURL string) error {
 	// Check if this shortID is already used for a different URL
 	if existingURL, exists := s.urls[shortID]; exists && existingURL != originalURL {
 		// Remove the old reverse mapping
+		log := logger.L()
 		log.Info("Short ID already used for different URL, updating mapping",
 			zap.String("shortID", shortID),
 			zap.String("oldURL", existingURL),
@@ -85,6 +77,7 @@ func (s *MemoryStorage) StoreWithID(shortID string, originalURL string) error {
 	s.urls[shortID] = originalURL
 	s.reverseUrls[originalURL] = shortID
 
+	log := logger.L()
 	log.Debug("Stored URL in memory",
 		zap.String("shortID", shortID),
 		zap.String("url", originalURL))
@@ -93,22 +86,14 @@ func (s *MemoryStorage) StoreWithID(shortID string, originalURL string) error {
 }
 
 // Get implements URLStorage.Get
-func (s *MemoryStorage) Get(shortID string) (string, error) {
-	log := logger.L()
-
+func (s *MemoryStorage) Get(ctx context.Context, shortID string) (string, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	originalURL, exists := s.urls[shortID]
-	if !exists {
-		log.Debug("Short ID not found in memory", zap.String("shortID", shortID))
-		return "", ErrNotFound
+	if url, exists := s.urls[shortID]; exists {
+		return url, nil
 	}
-
-	log.Debug("Retrieved URL from memory",
-		zap.String("shortID", shortID),
-		zap.String("url", originalURL))
-	return originalURL, nil
+	return "", ErrNotFound
 }
 
 // Close is a no-op for memory storage

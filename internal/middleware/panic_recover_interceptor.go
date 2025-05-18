@@ -22,15 +22,15 @@ func PanicRecoveryInterceptor(baseLogger *zap.Logger) grpc.UnaryServerIntercepto
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (resp interface{}, err error) {
-		// Get the request-scoped logger if it exists
-		log := logger.FromContext(ctx)
-		if log == nil {
-			log = baseLogger
-		}
-
 		// Recover from any panic
 		defer func() {
 			if r := recover(); r != nil {
+				// Get the request-scoped logger if it exists
+				log := logger.FromContext(ctx)
+				if log == nil {
+					log = baseLogger
+				}
+
 				// Log the panic with stack trace
 				stackTrace := string(debug.Stack())
 				log.Error("Panic recovered in gRPC handler",

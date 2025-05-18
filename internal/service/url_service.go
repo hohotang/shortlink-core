@@ -158,7 +158,7 @@ func (s *URLService) findExistingShortID(ctx context.Context, originalURL string
 	_, span := s.tracer.Start(ctx, "URLService.findExistingShortID")
 	defer span.End()
 
-	shortID, err := s.storage.Find(originalURL)
+	shortID, err := s.storage.Find(ctx, originalURL)
 	if err == nil {
 		// Found existing short ID, log and return
 		log.Info("Found existing short ID",
@@ -192,7 +192,7 @@ func (s *URLService) generateAndStoreShortID(ctx context.Context, originalURL st
 	span.SetAttributes(attribute.String("generated_short_id", shortID))
 
 	// Store the URL and generated short ID
-	if err := s.storage.StoreWithID(shortID, originalURL); err != nil {
+	if err := s.storage.StoreWithID(ctx, shortID, originalURL); err != nil {
 		log.Error("Failed to store URL", zap.Error(err), zap.String("shortID", shortID))
 		span.RecordError(err)
 		return "", fmt.Errorf("failed to store URL: %w", err)
@@ -229,7 +229,7 @@ func (s *URLService) ExpandURL(ctx context.Context, req *proto.ExpandURLRequest)
 	}
 
 	// Get original URL from storage
-	originalURL, err := s.storage.Get(req.ShortId)
+	originalURL, err := s.storage.Get(ctx, req.ShortId)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
